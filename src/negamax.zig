@@ -1,0 +1,201 @@
+const std = @import("std");
+const testing = std.testing;
+const Allocator = std.mem.Allocator;
+
+pub fn Negamax(comptime S: type, comptime M: type) type {
+    return NegamaxInternal(S, M, S, true, false, false);
+}
+
+pub fn NegamaxWithTransposition(comptime S: type, comptime M: type) type {
+    return NegamaxInternal(S, M, S, true, true, false);
+}
+
+/// Negamax algorithm with alpha-beta pruning and transposition table.
+///
+fn NegamaxInternal(
+    comptime S: type,
+    comptime M: type,
+    /// A namespace that provides these functions:
+    /// * `pub fn generateMoves(self, S, Allocator) Allocator.Error![]M`
+    /// * `pub fn applyMove(self, S, M) S`
+    /// * `pub fn evaluate(self, S) Score`
+    comptime Context: type,
+    comptime use_transposition: bool,
+    comptime use_diagnostics: bool,
+    comptime use_tracing: bool,
+) type {
+    return struct {
+        const Self = @This();
+
+        max_depth: usize,
+        transposition_table: TranspositionTable,
+        diagnostics: Diagnostics,
+        ctx: Context,
+        allocator: std.mem.Allocator,
+
+        const GenMovesFn = fn (S, Allocator) Allocator.Error![]M;
+        const ApplyMoveFn = fn (S, M) S;
+        const EvalFn = fn (S) Score;
+        const Score = i64;
+        const MinScore = std.math.minInt(Score) + 1;
+        const MaxScore = std.math.maxInt(Score);
+
+        pub const SearchResult = struct {
+            move: M,
+            score: Score,
+        };
+
+        const TranspositionEntry = struct {
+            depth: usize,
+            flag: enum(u2) {
+                Exact,
+                LowerBound,
+                UpperBound,
+            },
+            score: Score,
+        };
+
+        const TranspositionTable = if (use_transposition) b: {
+            break :b std.AutoArrayHashMap(S, TranspositionEntry);
+        } else void;
+
+        const Diagnostics = if (use_diagnostics) struct { nodes: usize = 0, transpositions: usize = 0 } else void;
+
+        pub fn init(allocator: Allocator, max_depth: usize) Self {
+            return Self{
+                .max_depth = max_depth,
+                .transposition_table = if (use_transposition) TranspositionTable.init(allocator) else {},
+                .diagnostics = if (use_diagnostics) Diagnostics{} else {},
+                .ctx = undefined,
+                .allocator = allocator,
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            if (use_transposition) {
+                self.transposition_table.deinit();
+            }
+        }
+
+        pub fn search(self: *Self, state: S) Allocator.Error!?SearchResult {
+            if (use_diagnostics) {
+                self.diagnostics.nodes = 1;
+            }
+
+            const moves = try Context.generateMoves(state, self.allocator);
+            defer self.allocator.free(moves);
+
+            if (moves.len == 0) {
+                return null;
+            }
+
+            var best_move: M = undefined;
+            var best_score: Score = MinScore;
+            for (moves) |move| {
+                self.trace(0, "\tconsidering move: {}", .{move});
+                const next_state = Context.applyMove(state, move);
+                const score = -try self.searchInternal(next_state, self.max_depth, -MaxScore, -MinScore);
+                self.trace(0, " | score: {}\n", .{score});
+                if (score > best_score) {
+                    best_score = score;
+                    best_move = move;
+                    self.trace(0, "\tnew best move: {} | score: {}\n", .{ best_move, best_score });
+                }
+            }
+            return .{ .move = best_move, .score = best_score };
+        }
+
+        fn searchInternal(self: *Self, state: S, depth: usize, alphaImut: Score, betaImut: Score) Allocator.Error!Score {
+            var alpha = alphaImut;
+            var beta = betaImut;
+
+            if (use_diagnostics) {
+                self.diagnostics.nodes += 1;
+            }
+
+            if (comptime use_transposition) {
+                if (self.transposition_table.get(state)) |entry| {
+                    if (use_diagnostics) {
+                        self.diagnostics.transpositions += 1;
+                    }
+                    if (entry.depth >= depth) {
+                        switch (entry.flag) {
+                            .Exact => return entry.score,
+                            .LowerBound => alpha = @max(alpha, entry.score),
+                            .UpperBound => beta = @min(beta, entry.score),
+                        }
+                        if (alpha >= beta) {
+                            return entry.score;
+                        }
+                    }
+                }
+            }
+
+            const moves = try Context.generateMoves(state, self.allocator);
+            defer self.allocator.free(moves);
+
+            if (depth == 0 or moves.len == 0) {
+                return Context.evaluate(state);
+            }
+
+            var value: Score = MinScore;
+            for (moves) |move| {
+                const next_state = Context.applyMove(state, move);
+                value = @max(value, -(try self.searchInternal(next_state, depth - 1, -beta, -alpha)));
+                alpha = @max(alpha, value);
+                if (alpha >= beta) {
+                    break;
+                }
+            }
+
+            if (comptime use_transposition) {
+                const entry = (try self.transposition_table.getOrPut(state)).value_ptr;
+                entry.score = value;
+                if (value <= alphaImut) {
+                    entry.flag = .UpperBound;
+                } else if (value >= beta) {
+                    entry.flag = .LowerBound;
+                } else {
+                    entry.flag = .Exact;
+                }
+                entry.depth = depth;
+            }
+
+            return value;
+        }
+
+        fn trace(self: Self, depth: usize, comptime fmt: []const u8, args: anytype) void {
+            if (use_tracing) {
+                const indent = self.max_depth - depth;
+                for (0..indent) |_| {
+                    std.debug.print("  ", .{});
+                }
+                std.debug.print(fmt, args);
+            }
+        }
+    };
+}
+
+test "Negamax is smaller than negamaxWithTransposition" {
+    const S = u8;
+    const M = u8;
+    try testing.expect(@sizeOf(Negamax(S, M)) < @sizeOf(NegamaxWithTransposition(S, M)));
+}
+
+test "search tic-tac-toe" {
+    const TicTacToe = @import("examples/tictactoe.zig");
+    var negamax = NegamaxWithTransposition(TicTacToe, u8).init(std.testing.allocator, 10);
+    defer negamax.deinit();
+    const state = TicTacToe.init();
+    const result = try negamax.search(state);
+    try testing.expectEqual(0, result.?.score);
+}
+
+test "obvious win" {
+    const TicTacToe = @import("examples/tictactoe.zig");
+    var negamax = Negamax(TicTacToe, u8).init(std.testing.allocator, 10);
+    defer negamax.deinit();
+    const state = TicTacToe{ .board = [_]i8{ 1, 1, -1, 0, -1, -1, 1, 0, 0 }, .player = 1 };
+    const result = try negamax.search(state);
+    try testing.expectEqual(3, result.?.move);
+}
