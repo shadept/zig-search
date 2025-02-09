@@ -159,3 +159,31 @@ test "winning position" {
         try testing.expectEqual(1, evaluate(ttt));
     }
 }
+
+fn renderBoard(stdout: anytype, ttt: Self) !void {
+    var bw = std.io.bufferedWriter(stdout);
+    var writer = bw.writer();
+
+    inline for (0..3) |i| {
+        const r = i * 3;
+        const c1 = renderCell(ttt.board[r], r);
+        const c2 = renderCell(ttt.board[r + 1], r + 1);
+        const c3 = renderCell(ttt.board[r + 2], r + 2);
+        try writer.print("{c}|{c}|{c}\n", .{ c1, c2, c3 });
+    }
+    try bw.flush();
+}
+
+fn renderCell(player: i8, cell: u8) u8 {
+    if (player == 0) {
+        return '1' + cell;
+    } else {
+        return if (player == 1) 'X' else 'O';
+    }
+}
+
+pub fn main() !void {
+    const GameLoop = @import("common.zig").GameLoop;
+    const game_loop = GameLoop(Self);
+    try game_loop.mainLoop();
+}

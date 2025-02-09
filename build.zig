@@ -15,26 +15,35 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&run_tests.step);
 
-    // We will also create a module for our other entry point, 'main.zig'.
-    const exe_mod = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
+    const search_mod = b.createModule(.{
+        .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    const exe = b.addExecutable(.{
-        .name = "search",
-        .root_module = exe_mod,
-    });
+    const examples_step = b.step("examples", "Build example applications");
 
-    b.installArtifact(exe);
+    const examples = [_][]const u8{
+        // "connect4",
+        "tictactoe",
+    };
 
-    const run_cmd = b.addRunArtifact(exe);
-    run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
+    inline for (examples) |example| {
+        const example_mod = b.createModule(.{
+            .root_source_file = b.path("examples/" ++ example ++ ".zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        example_mod.addImport("search", search_mod);
+
+        const example_exe = b.addExecutable(.{
+            .name = example,
+            .root_module = example_mod,
+        });
+
+        const example_run_cmd = b.addInstallArtifact(example_exe, .{});
+        example_run_cmd.step.dependOn(b.getInstallStep());
+
+        examples_step.dependOn(&example_run_cmd.step);
     }
-
-    const run_step = b.step("run", "Run the app");
-    run_step.dependOn(&run_cmd.step);
 }
