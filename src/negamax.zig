@@ -2,6 +2,9 @@ const std = @import("std");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 
+const C = @import("common.zig");
+const SearchResult = C.SearchResult;
+
 pub fn Negamax(comptime S: type, comptime M: type) type {
     return NegamaxInternal(S, M, S, true, false, false);
 }
@@ -30,7 +33,6 @@ fn NegamaxInternal(
         max_depth: usize,
         transposition_table: TranspositionTable,
         diagnostics: Diagnostics,
-        ctx: Context,
         allocator: std.mem.Allocator,
 
         const GenMovesFn = fn (S, Allocator) Allocator.Error![]M;
@@ -39,8 +41,6 @@ fn NegamaxInternal(
         const Score = i64;
         const MinScore = std.math.minInt(Score) + 1;
         const MaxScore = std.math.maxInt(Score);
-
-        pub const SearchResult = @import("interface.zig").SearchResult(M);
 
         const TranspositionEntry = struct {
             depth: usize,
@@ -63,7 +63,6 @@ fn NegamaxInternal(
                 .max_depth = max_depth,
                 .transposition_table = if (use_transposition) TranspositionTable.init(allocator) else {},
                 .diagnostics = if (use_diagnostics) Diagnostics{} else {},
-                .ctx = undefined,
                 .allocator = allocator,
             };
         }
@@ -74,7 +73,7 @@ fn NegamaxInternal(
             }
         }
 
-        pub fn search(self: *Self, state: S) Allocator.Error!?SearchResult {
+        pub fn search(self: *Self, state: S) Allocator.Error!?SearchResult(M) {
             if (use_diagnostics) {
                 self.diagnostics.nodes = 1;
             }
@@ -135,10 +134,14 @@ fn NegamaxInternal(
                 return Context.evaluate(state);
             }
 
+            const ctx = C.StateSortContext(S, M, Context).init(state, self.allocator);
+            const next_states = try ctx.applyAndSort(moves);
+            defer self.allocator.free(next_states);
+
             var value: Score = MinScore;
-            for (moves) |move| {
-                const next_state = Context.applyMove(state, move);
-                value = @max(value, -(try self.searchInternal(next_state, depth - 1, -beta, -alpha)));
+            for (next_states) |next| {
+                self.trace(depth, "considering move: {}\n", .{next.move});
+                value = @max(value, -(try self.searchInternal(next.state, depth - 1, -beta, -alpha)));
                 alpha = @max(alpha, value);
                 if (alpha >= beta) {
                     break;

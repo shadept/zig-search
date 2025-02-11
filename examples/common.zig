@@ -1,100 +1,152 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-pub fn GameLoop(comptime game: type) type {
+const Search = @import("search");
+const Algorithm = Search.Algorithm;
+
+pub fn GameLoop(comptime Context: type, comptime title: []const u8, comptime max_depth: u8) type {
     return struct {
         /// Main function
         pub fn mainLoop() !void {
-            const AlphaBeta = @import("search").AlphaBeta;
-            // const Minimax = @import("root.zig").Minimax;
-            // const Negamax = @import("root.zig").Negamax;
-
             var gpa = std.heap.GeneralPurposeAllocator(.{}){};
             const allocator = gpa.allocator();
 
-            var ttt = game.init();
-            var algo = AlphaBeta(game, u8).init(allocator, 10);
+            const stdout = std.io.getStdOut();
+            const stdin = std.io.getStdIn();
 
-            const stdout = std.io.getStdOut().writer();
-            const stdin = std.io.getStdIn().reader();
+            var players = [2]Player{ undefined, undefined };
+            var current_player: usize = 0;
 
             // Initial questions
-            try stdout.print("Welcome to Tic-Tac-Toe\n", .{});
-            var num_players: i8 = -1;
+            try stdout.writeAll("Welcome to " ++ title ++ "\n");
+            var num_humans: usize = 0;
             while (true) {
-                try stdout.print("How many humans players (0, 1 or 2)? ", .{});
-                num_players = try readInt(stdin, i8, 10);
-                if (0 <= num_players or num_players <= 2)
+                try stdout.writeAll("How many humans players (0, 1 or 2)? ");
+                const r = try readInt(stdin, usize, 10);
+                if (0 <= r or r <= 2) {
+                    num_humans = r;
                     break;
+                }
             }
 
-            var human_player: i8 = 0;
-            if (num_players == 1) {
-                while (true) {
-                    try stdout.print("Do you want to play first? (y/n): ", .{});
+            for (0..num_humans) |i| {
+                players[i] = Player.initHuman(stdout, stdin, allocator);
+            }
 
+            for (num_humans..2) |i| {
+                while (true) {
+                    try stdout.writer().print("Choose algorithm for CPU {} (1: Minimax, 2: AlphaBeta, 3: Negamax): ", .{i});
                     const response = try readLine(stdin, allocator);
                     defer allocator.free(response);
-
-                    if (std.ascii.toLower(response[0]) == 'y') {
-                        human_player = 1;
-                        break;
-                    } else if (std.ascii.toLower(response[0]) == 'n') {
-                        human_player = -1;
+                    if (response.len == 1) {
+                        const algo: Algorithm(Context, u8) = switch (response[0]) {
+                            '1' => .{ .minimax = Search.Minimax(Context, u8).init(allocator, max_depth) },
+                            '2' => .{ .alphaBeta = Search.AlphaBeta(Context, u8).init(allocator, max_depth) },
+                            '3' => .{ .negamax = Search.Negamax(Context, u8).init(allocator, max_depth) },
+                            else => continue,
+                        };
+                        players[i] = Player.initCpu(algo);
                         break;
                     }
                 }
             }
 
+            if (num_humans == 1) {
+                while (true) {
+                    try stdout.writeAll("Do you want to play first? (y/n): ");
+                    const response = try readLine(stdin, allocator);
+                    defer allocator.free(response);
+                    if (std.ascii.toLower(response[0]) == 'y') {
+                        break;
+                    } else if (std.ascii.toLower(response[0]) == 'n') {
+                        std.mem.swap(Player, &players[0], &players[1]);
+                        break;
+                    }
+                }
+            }
+
+            var game = Context.init();
+
             while (true) {
-                try game.renderBoard(stdout, ttt);
-                if (num_players == 2 or ttt.player == human_player) {
-                    ttt = try humanPlayer(ttt, stdout, stdin);
+                try game.renderBoard(stdout);
+                game = try players[current_player].play(game);
+                current_player = if (current_player == 0) 1 else 0;
+                if (game.isGameOver()) {
+                    try game.renderBoard(stdout);
+                    _ = try stdout.writeAll("Game over\n");
+                    break;
+                }
+            }
+        }
+
+        const HumanPlayer = struct {
+            stdout: std.fs.File,
+            stdin: std.fs.File,
+            allocator: Allocator,
+
+            pub fn play(self: HumanPlayer, game: Context) !Context {
+                const valid_moves = try Context.generateMoves(game, self.allocator);
+                var move: u8 = 0;
+                while (true) {
+                    _ = try self.stdout.writeAll("Next move: ");
+                    const num = readInt(self.stdin, u8, 10) catch continue;
+                    if (num == 0) continue;
+                    // TODO check if move is valid in agnistic way to the game
+                    if (std.mem.indexOfScalar(u8, valid_moves, num - 1)) |i| {
+                        move = valid_moves[i];
+                        break;
+                    }
+                }
+
+                return game.applyMove(move);
+            }
+        };
+
+        const CpuPlayer = struct {
+            algo: Algorithm(Context, u8),
+
+            pub fn play(self: CpuPlayer, game: Context) !Context {
+                var timer = try std.time.Timer.start();
+                const result = try self.algo.search(game);
+                const elapsed: f64 = @floatFromInt(timer.read());
+                std.debug.print("Time elapsed is: {d:.3}ms\n", .{elapsed / std.time.ns_per_ms});
+                if (result) |res| {
+                    // std.debug.assert(game.board[res.move] == 0);
+                    std.debug.print("Computer move: {}\n", .{res.move + 1});
+                    const next_state = game.applyMove(res.move);
+                    return next_state;
                 } else {
-                    ttt = try cpuPlayer(ttt, &algo);
-                }
-
-                if (ttt.isGameOver()) {
-                    try game.renderBoard(stdout, ttt);
-                    _ = try stdout.write("Game over\n");
-                    break;
+                    std.debug.print("No moves??\n", .{});
+                    return game;
                 }
             }
-        }
+        };
 
-        fn humanPlayer(ttt: game, stdout: anytype, stdin: anytype) !game {
-            var move: u8 = 0;
-            while (true) {
-                _ = try stdout.write("Next move: ");
-                move = try readInt(stdin, u8, 10) - 1;
-                if (move < ttt.board.len and ttt.board[move] == 0)
-                    break;
+        const Player = union(enum) {
+            human: HumanPlayer,
+            cpu: CpuPlayer,
+
+            pub fn initHuman(stdout: std.fs.File, stdin: anytype, allocator: Allocator) Player {
+                return .{ .human = .{ .stdout = stdout, .stdin = stdin, .allocator = allocator } };
             }
 
-            return ttt.applyMove(move);
-        }
-
-        fn cpuPlayer(ttt: game, algo: anytype) !game {
-            var timer = try std.time.Timer.start();
-            const result = try algo.search(ttt);
-            const elapsed: f64 = @floatFromInt(timer.read());
-            std.debug.print("Time elapsed is: {d:.3}ms\n", .{elapsed / std.time.ns_per_ms});
-            if (result) |res| {
-                std.debug.assert(ttt.board[res.move] == 0);
-                std.debug.print("Computer move: {}\n", .{res.move + 1});
-                const next_state = ttt.applyMove(res.move);
-                return next_state;
-            } else {
-                std.debug.print("No moves??\n", .{});
-                return ttt;
+            pub fn initCpu(algo: Algorithm(Context, u8)) Player {
+                return .{ .cpu = .{ .algo = algo } };
             }
-        }
+
+            pub fn play(self: Player, game: Context) !Context {
+                return switch (self) {
+                    inline else => |impl| impl.play(game),
+                };
+            }
+        };
     };
 }
 
-fn readLine(reader: anytype, allocator: Allocator) ![]u8 {
+fn readLine(file: std.fs.File, allocator: Allocator) ![]u8 {
     const builtin = @import("builtin");
     var buffer = try std.ArrayList(u8).initCapacity(allocator, 20);
+    const reader = file.reader();
     reader.streamUntilDelimiter(buffer.writer(), '\n', null) catch |err| switch (err) {
         error.EndOfStream => return err,
         else => unreachable,
@@ -109,9 +161,9 @@ fn readLine(reader: anytype, allocator: Allocator) ![]u8 {
     return buffer.toOwnedSlice();
 }
 
-fn readInt(reader: anytype, comptime T: type, base: u8) (@TypeOf(reader).Error || std.fmt.ParseIntError)!T {
+fn readInt(file: std.fs.File, comptime T: type, base: u8) anyerror!T {
     var buf: [20]u8 = undefined;
-    const len = try reader.read(&buf);
+    const len = try file.read(&buf);
     if (len == buf.len) {
         std.debug.print("Input is too big!\n", .{});
         std.process.exit(1);

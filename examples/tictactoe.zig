@@ -3,15 +3,16 @@ const testing = std.testing;
 const Allocator = std.mem.Allocator;
 
 const Self = @This();
+const Move = u8;
 
 board: [9]i8,
-player: i8,
+player: u8,
 
 pub fn init() Self {
-    return .{ .board = [_]i8{0} ** 9, .player = 1 };
+    return .{ .board = [_]i8{0} ** 9, .player = 0 };
 }
 
-pub fn generateMoves(state: Self, allocator: Allocator) Allocator.Error![]u8 {
+pub fn generateMoves(state: Self, allocator: Allocator) Allocator.Error![]Move {
     if (evaluate(state) != 0) {
         return allocator.alloc(u8, 0);
     }
@@ -28,11 +29,11 @@ pub fn generateMoves(state: Self, allocator: Allocator) Allocator.Error![]u8 {
     return moves.toOwnedSlice();
 }
 
-pub fn applyMove(state: Self, move: u8) Self {
+pub fn applyMove(state: Self, move: Move) Self {
     var next_state = state;
     std.debug.assert(next_state.board[move] == 0);
-    next_state.board[move] = state.player;
-    next_state.player = -state.player;
+    next_state.board[move] = if (state.player == 0) 1 else -1;
+    next_state.player = if (state.player == 0) 1 else 0;
     return next_state;
 }
 
@@ -49,7 +50,7 @@ pub fn isGameOver(state: Self) bool {
 }
 
 pub fn evaluate(state: Self) i64 {
-    const sign = std.math.sign(state.player);
+    const sign: i8 = if (state.player == 0) 1 else -1;
     for (0..3) |i| {
         // row
         if (state.board[i * 3] != 0 and
@@ -160,15 +161,15 @@ test "winning position" {
     }
 }
 
-fn renderBoard(stdout: anytype, ttt: Self) !void {
-    var bw = std.io.bufferedWriter(stdout);
+pub fn renderBoard(self: Self, stdout: std.fs.File) !void {
+    var bw = std.io.bufferedWriter(stdout.writer());
     var writer = bw.writer();
 
     inline for (0..3) |i| {
         const r = i * 3;
-        const c1 = renderCell(ttt.board[r], r);
-        const c2 = renderCell(ttt.board[r + 1], r + 1);
-        const c3 = renderCell(ttt.board[r + 2], r + 2);
+        const c1 = renderCell(self.board[r], r);
+        const c2 = renderCell(self.board[r + 1], r + 1);
+        const c3 = renderCell(self.board[r + 2], r + 2);
         try writer.print("{c}|{c}|{c}\n", .{ c1, c2, c3 });
     }
     try bw.flush();
@@ -184,6 +185,6 @@ fn renderCell(player: i8, cell: u8) u8 {
 
 pub fn main() !void {
     const GameLoop = @import("common.zig").GameLoop;
-    const game_loop = GameLoop(Self);
+    const game_loop = GameLoop(Self, "Tic-Tac-Toe", 10);
     try game_loop.mainLoop();
 }

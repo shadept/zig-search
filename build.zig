@@ -24,7 +24,7 @@ pub fn build(b: *std.Build) void {
     const examples_step = b.step("examples", "Build example applications");
 
     const examples = [_][]const u8{
-        // "connect4",
+        "connect4",
         "tictactoe",
     };
 

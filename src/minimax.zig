@@ -2,6 +2,9 @@ const std = @import("std");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 
+const C = @import("common.zig");
+const SearchResult = C.SearchResult;
+
 pub fn Minimax(comptime S: type, comptime M: type) type {
     return MinimaxInternal(S, M, S, false);
 }
@@ -16,7 +19,6 @@ fn MinimaxInternal(
         const Self = @This();
 
         max_depth: usize,
-        ctx: Context,
         allocator: Allocator,
 
         const Score = i64;
@@ -27,17 +29,14 @@ fn MinimaxInternal(
             nodes: usize = 0,
         };
 
-        pub const SearchResult = @import("interface.zig").SearchResult(M);
-
         pub fn init(allocator: Allocator, max_depth: usize) Self {
             return Self{
                 .max_depth = max_depth,
-                .ctx = undefined,
                 .allocator = allocator,
             };
         }
 
-        pub fn search(self: Self, state: S) Allocator.Error!?SearchResult {
+        pub fn search(self: *Self, state: S) Allocator.Error!?SearchResult(M) {
             const moves = try Context.generateMoves(state, self.allocator);
             defer self.allocator.free(moves);
 

@@ -2,6 +2,9 @@ const std = @import("std");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 
+const C = @import("common.zig");
+const SearchResult = C.SearchResult;
+
 pub fn AlphaBeta(comptime S: type, comptime M: type) type {
     return AlphaBetaInternal(S, M, S, false);
 }
@@ -16,28 +19,29 @@ fn AlphaBetaInternal(
         const Self = @This();
 
         max_depth: usize,
-        ctx: Context,
         allocator: Allocator,
 
         const Score = i64;
         const MinScore = std.math.minInt(Score) + 1;
         const MaxScore = std.math.maxInt(Score);
 
+        const StateWithEval = struct {
+            state: S,
+            score: Score,
+        };
+
         const Diagnostics = struct {
             nodes: usize = 0,
         };
 
-        pub const SearchResult = @import("interface.zig").SearchResult(M);
-
         pub fn init(allocator: Allocator, max_depth: usize) Self {
             return Self{
                 .max_depth = max_depth,
-                .ctx = undefined,
                 .allocator = allocator,
             };
         }
 
-        pub fn search(self: Self, state: S) Allocator.Error!?SearchResult {
+        pub fn search(self: *Self, state: S) Allocator.Error!?SearchResult(M) {
             const moves = try Context.generateMoves(state, self.allocator);
             defer self.allocator.free(moves);
 
@@ -67,24 +71,24 @@ fn AlphaBetaInternal(
                 return sign * Context.evaluate(state);
             }
 
-            // TODO sort moves
+            const ctx = C.StateSortContext(S, M, Context).init(state, self.allocator);
+            const next_states = try ctx.applyAndSort(moves);
+            defer self.allocator.free(next_states);
 
             var a = alpha;
             var b = beta;
             var value: Score = if (is_maximizing) MinScore else MaxScore;
-            for (moves) |move| {
-                self.trace(depth, "considering move: {}\n", .{move});
-                const next_state = Context.applyMove(state, move);
-                const branch_score = try self.searchInternal(next_state, depth - 1, a, b, !is_maximizing);
+            for (next_states) |next| {
+                self.trace(depth, "considering move: {}\n", .{next.move});
+                const branch_score = try self.searchInternal(next.state, depth - 1, a, b, !is_maximizing);
                 if (is_maximizing) {
                     value = @max(value, branch_score);
+                    if (value > b) break;
                     a = @max(a, value);
                 } else {
                     value = @min(value, branch_score);
+                    if (value < a) break;
                     b = @min(b, value);
-                }
-                if (b <= a) {
-                    break;
                 }
                 self.trace(depth, "current best: {}\n", .{value});
             }

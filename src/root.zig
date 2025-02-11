@@ -5,24 +5,25 @@ pub usingnamespace @import("minimax.zig");
 pub usingnamespace @import("alphabeta.zig");
 pub usingnamespace @import("negamax.zig");
 
-const TopLevel = @This();
+const Search = @This();
+const SearchResult = @import("common.zig").SearchResult;
 
-pub fn Search(comptime S: type, comptime M: type) type {
+pub fn Algorithm(comptime S: type, comptime M: type) type {
     return union(enum) {
-        minimax: TopLevel.Minimax(S, M),
-        alphaBeta: TopLevel.AlphaBeta(S, M),
-        negamax: TopLevel.Negamax(S, M),
+        const Self = @This();
 
-        pub const SearchResult = @import("interface.zig").SearchResult(M);
+        minimax: Search.Minimax(S, M),
+        alphaBeta: Search.AlphaBeta(S, M),
+        negamax: Search.Negamax(S, M),
 
-        pub fn search(self: Search, state: S) Allocator.Error!?SearchResult {
+        pub fn search(self: Self, state: S) Allocator.Error!?SearchResult(M) {
             switch (self) {
-                inline else => |impl| return impl.search(state),
+                inline else => |impl| return @TypeOf(impl).search(@constCast(&impl), state),
             }
         }
     };
 }
 
 test {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDeclsRecursive(Search);
 }
