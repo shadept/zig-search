@@ -1,14 +1,40 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-pub const Score = i64;
-
-pub fn SearchResult(comptime M: type) type {
+pub fn Strategy(comptime S: type, comptime M: type) type {
     return struct {
-        move: M,
-        score: Score,
+        const Self = @This();
+
+        ptr: *anyopaque,
+        vtable: *const VTable,
+
+        pub const VTable = struct {
+            chooseMove: *const fn (ctx: *anyopaque, state: S) Allocator.Error!?M,
+            setTimeout: *const fn (ctx: *anyopaque, timeout: usize) void,
+            setMaxDepth: *const fn (ctx: *anyopaque, depth: usize) void,
+        };
+
+        pub fn chooseMove(self: *Self, state: S) Allocator.Error!?M {
+            return self.vtable.chooseMove(self.ptr, state);
+        }
+
+        pub fn setTimeout(self: *Self, timeout: usize) void {
+            self.vtable.setTimeout(self, timeout);
+        }
+
+        pub fn setMaxDepth(self: *Self, depth: usize) void {
+            self.vtable.setMaxDepth(self, depth);
+        }
+
+        /// Not for public use. Intended for construction of strategies that do not support timeouts.
+        pub fn noTimeout(_: *anyopaque, _: usize) void {}
+
+        /// Not for public use. Intended for construction of strategies that do not support max depth.
+        pub fn noMaxDepth(_: *anyopaque, _: usize) void {}
     };
 }
+
+pub const Score = i64;
 
 pub fn StateSortContext(comptime S: type, comptime M: type, comptime Context: type) type {
     return struct {

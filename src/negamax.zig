@@ -3,7 +3,7 @@ const testing = std.testing;
 const Allocator = std.mem.Allocator;
 
 const C = @import("common.zig");
-const SearchResult = C.SearchResult;
+const Score = C.Score;
 
 pub fn Negamax(comptime S: type, comptime M: type) type {
     return NegamaxInternal(S, M, S, true, false, false);
@@ -38,9 +38,9 @@ fn NegamaxInternal(
         const GenMovesFn = fn (S, Allocator) Allocator.Error![]M;
         const ApplyMoveFn = fn (S, M) S;
         const EvalFn = fn (S) Score;
-        const Score = i64;
         const MinScore = std.math.minInt(Score) + 1;
         const MaxScore = std.math.maxInt(Score);
+        const Strategy = C.Strategy(S, M);
 
         const TranspositionEntry = struct {
             depth: usize,
@@ -73,7 +73,24 @@ fn NegamaxInternal(
             }
         }
 
-        pub fn search(self: *Self, state: S) Allocator.Error!?SearchResult(M) {
+        pub fn strategy(self: *Self) Strategy {
+            const impl = struct {
+                pub fn chooseMove(ctx: *anyopaque, state: S) Allocator.Error!?M {
+                    const s: *Self = @ptrCast(@alignCast(ctx));
+                    return s.search(state);
+                }
+            };
+            return .{
+                .ptr = self,
+                .vtable = &.{
+                    .chooseMove = impl.chooseMove,
+                    .setTimeout = Strategy.noTimeout,
+                    .setMaxDepth = Strategy.noMaxDepth,
+                },
+            };
+        }
+
+        pub fn search(self: *Self, state: S) Allocator.Error!?M {
             if (use_diagnostics) {
                 self.diagnostics.nodes = 1;
             }
@@ -85,7 +102,7 @@ fn NegamaxInternal(
                 return null;
             }
 
-            var best_move: M = undefined;
+            var best_move: ?M = null;
             var best_score: Score = MinScore;
             for (moves) |move| {
                 self.trace(0, "\tconsidering move: {}", .{move});
@@ -98,7 +115,7 @@ fn NegamaxInternal(
                     self.trace(0, "\tnew best move: {} | score: {}\n", .{ best_move, best_score });
                 }
             }
-            return .{ .move = best_move, .score = best_score };
+            return best_move;
         }
 
         fn searchInternal(self: *Self, state: S, depth: usize, alphaImut: Score, betaImut: Score) Allocator.Error!Score {

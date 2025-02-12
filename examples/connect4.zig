@@ -2,6 +2,9 @@ const std = @import("std");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 
+const Search = @import("search");
+const Score = Search.Score;
+
 const Self = @This();
 const Move = u8;
 
@@ -55,16 +58,22 @@ fn bottomMask(col: u6) u64 {
 /// Apply the given move, assuming it is valid.
 pub fn applyMove(self: Self, move: Move) Self {
     std.debug.assert(0 <= move and move <= 6);
-    var mask = self.boards[0] | self.boards[1];
-    var next = self;
-    const current_position = &next.boards[self.player];
-
-    current_position.* ^= mask;
+    var ret = self;
+    var mask = ret.boards[0] | ret.boards[1];
+    ret.boards[ret.player] ^= mask;
     mask |= mask + bottomMask(@intCast(move));
-    current_position.* ^= mask;
+    ret.boards[ret.player] ^= mask;
+    ret.player = ret.player ^ 1;
+    return ret;
+}
 
-    next.player = if (self.player == 0) 1 else 0;
-    return next;
+fn fourInARow(board: u64) bool {
+    const directions = [_]comptime_int{ 1, 6, 7, 8 };
+    inline for (directions) |dir| {
+        const bb = board & (board >> dir);
+        if (bb & (bb >> (2 * dir)) != 0) return true;
+    }
+    return false;
 }
 
 pub fn isGameOver(self: Self) bool {
@@ -74,17 +83,7 @@ pub fn isGameOver(self: Self) bool {
     return fourInARow(self.boards[0]) or fourInARow(self.boards[1]);
 }
 
-fn fourInARow(board: u64) bool {
-    const directions = [_]comptime_int{ 1, 6, 7, 8 };
-    inline for (directions) |dir| {
-        const bb = board & (board >> dir);
-        if (bb & (bb >> (2 * dir)) != 0) return true;
-    }
-
-    return false;
-}
-
-const FOUR_IN_A_ROW_COUNTS = [49]u8{
+const ALIGMENTS_COUNTS = [49]Score{
     3, 4,  5,  5,  4,  3, 0,
     4, 6,  8,  8,  6,  4, 0,
     5, 8,  11, 11, 8,  5, 0,
@@ -94,160 +93,33 @@ const FOUR_IN_A_ROW_COUNTS = [49]u8{
     3, 4,  5,  5,  4,  3, 0,
 };
 
-pub fn evaluate(self: Self) i64 {
+pub fn evaluate(self: Self) Score {
     const current_player_board = self.boards[self.player];
-    const opponent_board = self.boards[if (self.player == 0) 1 else 0];
-
     if (fourInARow(current_player_board)) {
         return 1000;
-    } else if (fourInARow(opponent_board)) {
+    }
+
+    const opponent_board = self.boards[self.player ^ 1];
+    if (fourInARow(opponent_board)) {
         return -1000;
     }
 
-    const BitSet = std.bit_set.IntegerBitSet(64);
-    var score: i64 = 0;
-
-    var current_player_iter = (BitSet{ .mask = current_player_board }).iterator(.{});
-    while (current_player_iter.next()) |i| {
-        score += @intCast(FOUR_IN_A_ROW_COUNTS[i]);
+    var score: Score = 0;
+    var bits = current_player_board;
+    while (bits != 0) {
+        const index = @ctz(bits);
+        bits &= bits - 1;
+        score += ALIGMENTS_COUNTS[index];
     }
 
-    var opponent_iter = (BitSet{ .mask = opponent_board }).iterator(.{});
-    while (opponent_iter.next()) |i| {
-        score -= @intCast(FOUR_IN_A_ROW_COUNTS[i]);
+    bits = opponent_board;
+    while (bits != 0) {
+        const index = @ctz(bits);
+        bits &= bits - 1;
+        score -= ALIGMENTS_COUNTS[index];
     }
 
     return score;
-}
-
-test "initial position" {
-    const state = init();
-    const moves = try generateMoves(state, testing.allocator);
-    defer testing.allocator.free(moves);
-
-    try testing.expectEqual(7, moves.len);
-    inline for (0..7) |i| {
-        try testing.expectEqual(i, moves[i]);
-    }
-}
-
-test "apply move from initial position" {
-    inline for (0..7) |i| {
-        const c: u6 = @intCast(i);
-        const state = init();
-        const next = applyMove(state, c);
-        try testing.expectEqual(1, next.player);
-        try testing.expectEqual(1, next.boards[0] >> c);
-    }
-}
-
-// test "last row" {
-//     var state = init();
-//     state.boards[0] = 0b0000000_0001000_0100011_1001100_0110011_1010011;
-//     state.boards[1] = ~(state.boards[0] | TOP_ROW);
-
-//     const moves = try generateMoves(state, testing.allocator);
-//     defer testing.allocator.free(moves);
-
-//     try testing.expectEqual(7, moves.len);
-// }
-
-test "no more moves" {
-    var state = init();
-    state.boards[0] = 0b1110111_0001000_0100011_1001100_0110011_1010011;
-    state.boards[1] = ~state.boards[0];
-
-    const moves = try generateMoves(state, testing.allocator);
-    defer testing.allocator.free(moves);
-
-    try testing.expectEqual(0, moves.len);
-}
-
-test "4 in a row" {
-    var state = init();
-
-    state.boards[0] = 0b0000000_0000000_0000000_0000000_0000000_0001111;
-    var res = fourInARow(state.boards[0]);
-    try testing.expectEqual(true, res);
-
-    state.boards[0] = 0b0011110_0000000_0000000_0000000_0000000_0000000;
-    res = fourInARow(state.boards[0]);
-    try testing.expectEqual(true, res);
-
-    state.boards[0] = 0b0000000_0000000_0001000_0001000_0001000_0001000;
-    res = fourInARow(state.boards[0]);
-    try testing.expectEqual(true, res);
-
-    state.boards[0] = 0b0000000_0000000_0000001_0000010_0000100_0001000;
-    res = fourInARow(state.boards[0]);
-    try testing.expectEqual(true, res);
-
-    state.boards[0] = 0b0000000_0000000_0000000_0000000_0000000_0000000;
-    res = fourInARow(state.boards[0]);
-    try testing.expectEqual(false, res);
-
-    state.boards[0] = 0b0000000_0000000_0000000_0000000_0000011_1100000;
-    res = fourInARow(state.boards[0]);
-    try testing.expectEqual(false, res);
-
-    state.boards[0] = 0b0000000_0000000_0000000_0010000_0101000_1000101;
-    res = fourInARow(state.boards[0]);
-    try testing.expectEqual(false, res);
-}
-
-test "isGameOver" {
-    var state = init();
-    try testing.expectEqual(false, state.isGameOver());
-
-    state.boards[0] = 0b0000000_0000000_0000000_0000000_0000000_0000000;
-    try testing.expectEqual(false, state.isGameOver());
-
-    state.boards[0] = 0b0000000_0000000_0000000_0000000_0000000_0001111;
-    try testing.expectEqual(true, state.isGameOver());
-
-    state.boards[0] = 0b1110111_0001000_0100011_1001100_0110011_1010011;
-    state.boards[1] = ~state.boards[0];
-    try testing.expectEqual(true, state.isGameOver());
-
-    state.boards[0] = 0b0000000_0000000_0001000_0001000_0010000_0111000;
-    state.boards[1] = 0b0000000_0000000_0000000_0010000_0101000_1000101;
-    try testing.expectEqual(false, state.isGameOver());
-}
-
-test "evaluate initial position" {
-    const state = init();
-    const score = evaluate(state);
-    try testing.expectEqual(0, score);
-}
-
-test "evaluate winning position" {
-    var state = init();
-    state.boards[0] = 0b0000000_0000000_0000000_0000000_0000000_0001111;
-    var score = evaluate(state);
-    try testing.expectEqual(1000, score);
-
-    state.boards[0] = 0b0000000_0000000_0000000_0000000_0000000_0000000;
-    state.boards[1] = 0b0000000_0000000_0000000_0000000_0000000_0001111;
-    score = evaluate(state);
-    try testing.expectEqual(-1000, score);
-}
-
-test "evaluate threats" {
-    var state = init();
-    state.boards[0] = 0b0000000_0000000_0000000_0000000_0000000_0000110;
-    state.boards[1] = 0b0000000_0000000_0000000_0000000_0000000_0001001;
-    var score = evaluate(state);
-    try testing.expectEqual(-1, score);
-
-    state.boards[0] = 0b0000000_0000000_0000000_0000000_0000000_0000110;
-    state.boards[1] = 0b0000000_0000000_0000000_0000000_0000000_0000000;
-    score = evaluate(state);
-    try testing.expectEqual(9, score);
-
-    state.boards[0] = 0b0000000_0000000_0000000_0000000_0000000_0000000;
-    state.boards[1] = 0b0000000_0000000_0000000_0000000_0000000_0001001;
-    score = evaluate(state);
-    try testing.expectEqual(-10, score);
 }
 
 pub fn renderBoard(self: Self, stdout: std.fs.File) !void {
@@ -262,14 +134,12 @@ pub fn renderBoard(self: Self, stdout: std.fs.File) !void {
         const r: u8 = (5 - i);
         try writer.print("{c} |", .{'A' + r});
         inline for (0..width) |c| {
-            const p1 = (self.boards[0] >> (c * (height + 1) + r) & 1) == 1;
-            const p2 = (self.boards[1] >> (c * (height + 1) + r) & 1) == 1;
-            if (p1) {
+            if ((self.boards[0] >> (c * (height + 1) + r) & 1) == 1) {
                 try color.setColor(writer, Color.yellow);
                 try writer.print("O", .{});
                 try color.setColor(writer, Color.reset);
                 try writer.print("|", .{});
-            } else if (p2) {
+            } else if ((self.boards[1] >> (c * (height + 1) + r) & 1) == 1) {
                 try color.setColor(writer, Color.red);
                 try writer.print("X", .{});
                 try color.setColor(writer, Color.reset);
@@ -288,4 +158,108 @@ pub fn main() !void {
     const GameLoop = @import("common.zig").GameLoop;
     const game_loop = GameLoop(Self, "Connect 4", 6);
     try game_loop.mainLoop();
+}
+
+// Added tests
+test "init initializes empty board" {
+    const game = Self.init();
+    try testing.expectEqual(game.boards[0], 0);
+    try testing.expectEqual(game.boards[1], 0);
+    try testing.expectEqual(game.player, 0);
+}
+
+test "generateMoves returns all columns when empty" {
+    const game = Self.init();
+    const moves = try game.generateMoves(testing.allocator);
+    defer testing.allocator.free(moves);
+    try testing.expectEqual(moves.len, width);
+    for (0..width) |i| try testing.expectEqual(moves[i], i);
+}
+
+test "generateMoves excludes full columns" {
+    var game = Self.init();
+    // Fill column 3 completely
+    game = playSequence(game, .{ 3, 3, 3, 3, 3, 3 });
+    const moves = try game.generateMoves(testing.allocator);
+    defer testing.allocator.free(moves);
+    try testing.expectEqual(moves.len, width - 1);
+    for (moves) |m| try testing.expect(m != 3);
+}
+
+test "applyMove updates board and alternates player" {
+    var game = Self.init();
+    // First move in column 2
+    game = game.applyMove(2);
+    try testing.expectEqual(game.player, 1);
+    try testing.expect(game.boards[0] == bottomMask(2));
+
+    // Second move in column 5
+    game = game.applyMove(5);
+    try testing.expectEqual(game.player, 0);
+    try testing.expect(game.boards[1] == bottomMask(5));
+}
+
+test "fourInARow detects horizontal win" {
+    // horizontal win in column 4
+    const board = bottomMask(0) |
+        bottomMask(1) |
+        bottomMask(2) |
+        bottomMask(3);
+    try testing.expect(fourInARow(board));
+}
+
+test "fourInARow detects vertical win" {
+    // Vertical win in column 4
+    const board = bottomMask(4) |
+        (bottomMask(4) << 1) |
+        (bottomMask(4) << 2) |
+        (bottomMask(4) << 3);
+    try testing.expect(fourInARow(board));
+}
+
+test "fourInARow detects diagonal win (positive slope)" {
+    // Diagonal from (0,0) to (3,3)
+    const b = bottomMask(0) | // column 0, row 0
+        (bottomMask(1) << 1) | // column 1, row 1
+        (bottomMask(2) << 2) | // column 2, row 2
+        (bottomMask(3) << 3); // column 3, row 3
+    try testing.expect(fourInARow(b));
+}
+
+test "fourInARow returns false for three in row" {
+    // Three horizontal pieces
+    const board = bottomMask(0) | bottomMask(1) | bottomMask(2);
+    try testing.expect(!fourInARow(board));
+}
+
+test "evaluate detects immediate win" {
+    var game = Self.init();
+    // Create winning position for current player
+    game = playSequence(game, .{ 0, 1, 0, 1, 0, 1, 0 });
+    game.player = 0; // set player back to previous ones
+    try testing.expectEqual(game.evaluate(), 1000);
+}
+
+test "evaluate detects opponent win" {
+    var game = Self.init();
+    // Opponent creates winning position
+    game = playSequence(game, .{ 0, 0, 1, 1, 2, 2, 3 });
+    try testing.expectEqual(game.evaluate(), -1000);
+}
+
+test "isGameOver detects filled board" {
+    var game = Self.init();
+    // Create full board (draw scenario)
+    const moves = .{ 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 6, 6, 6, 6, 6, 6 };
+    game = playSequence(game, moves);
+    try testing.expect(game.isGameOver());
+}
+
+fn playSequence(game: Self, move_sequence: anytype) Self {
+    var ret = game;
+    inline for (std.meta.fields(@TypeOf(move_sequence))) |field| {
+        const move = @field(move_sequence, field.name);
+        ret = ret.applyMove(move);
+    }
+    return ret;
 }

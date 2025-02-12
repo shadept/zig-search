@@ -4,8 +4,14 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const tests = b.addTest(.{
+    const search_mod = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const tests = b.addTest(.{
+        .root_module = search_mod,
         .target = target,
         .optimize = optimize,
     });
@@ -14,12 +20,6 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&run_tests.step);
-
-    const search_mod = b.createModule(.{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
 
     const examples_step = b.step("examples", "Build example applications");
 
@@ -45,5 +45,14 @@ pub fn build(b: *std.Build) void {
         example_run_cmd.step.dependOn(b.getInstallStep());
 
         examples_step.dependOn(&example_run_cmd.step);
+
+        const example_test = b.addTest(.{
+            .root_module = example_mod,
+            .target = target,
+            .optimize = optimize,
+        });
+
+        const example_test_run = b.addRunArtifact(example_test);
+        test_step.dependOn(&example_test_run.step);
     }
 }
