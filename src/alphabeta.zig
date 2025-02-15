@@ -59,6 +59,10 @@ fn AlphaBetaInternal(
         }
 
         pub fn search(self: *Self, state: S) Allocator.Error!?M {
+            if (self.max_depth == 0) {
+                return null;
+            }
+
             const moves = try Context.generateMoves(state, self.allocator);
             defer self.allocator.free(moves);
 
@@ -66,27 +70,36 @@ fn AlphaBetaInternal(
                 return null;
             }
 
-            var best_move: ?M = null;
+            var best_move: M = moves[0];
             var best_score: Score = MinScore;
             for (moves) |move| {
+                self.trace(0, "considering move: {any}\n", .{move});
                 const next_state = Context.applyMove(state, move);
-                const score = try self.searchInternal(next_state, self.max_depth, MinScore, MaxScore, false);
+                const score = try self.searchInternal(next_state, self.max_depth, false, MinScore, MaxScore);
+                self.trace(0, " | score: {}\n", .{score});
                 if (score > best_score) {
                     best_score = score;
                     best_move = move;
+                    self.trace(0, "new best move: {any} | score: {}\n", .{ best_move, best_score });
                 }
             }
             return best_move;
         }
 
-        fn searchInternal(self: Self, state: S, depth: usize, alpha: Score, beta: Score, is_maximizing: bool) Allocator.Error!Score {
-            const moves = try Context.generateMoves(state, self.allocator);
-            defer self.allocator.free(moves);
+        fn searchInternal(self: Self, state: S, depth: usize, is_maximizing: bool, alpha: Score, beta: Score) Allocator.Error!Score {
+            self.trace(depth, "searchInternal: depth: {} is_maximizing: {} alpha: {} beta: {}\n", .{ depth, is_maximizing, alpha, beta });
 
-            if (depth == 0 or moves.len == 0) {
+            if (Context.getWinner(state)) |_| {
+                return if (is_maximizing) MaxScore else MinScore;
+            }
+
+            if (depth == 0) {
                 const sign: Score = if (is_maximizing) 1 else -1;
                 return sign * Context.evaluate(state);
             }
+
+            const moves = try Context.generateMoves(state, self.allocator);
+            defer self.allocator.free(moves);
 
             const ctx = C.StateSortContext(S, M, Context).init(state, self.allocator);
             const next_states = try ctx.applyAndSort(moves);
@@ -94,22 +107,21 @@ fn AlphaBetaInternal(
 
             var a = alpha;
             var b = beta;
-            var value: Score = if (is_maximizing) MinScore else MaxScore;
+            var best: Score = if (is_maximizing) MinScore else MaxScore;
             for (next_states) |next| {
                 self.trace(depth, "considering move: {}\n", .{next.move});
-                const branch_score = try self.searchInternal(next.state, depth - 1, a, b, !is_maximizing);
+                const branch_score = try self.searchInternal(next.state, depth - 1, !is_maximizing, a, b);
                 if (is_maximizing) {
-                    value = @max(value, branch_score);
-                    if (value > b) break;
-                    a = @max(a, value);
+                    best = @max(best, branch_score);
+                    a = @max(a, branch_score);
                 } else {
-                    value = @min(value, branch_score);
-                    if (value < a) break;
-                    b = @min(b, value);
+                    best = @min(best, branch_score);
+                    b = @min(b, branch_score);
                 }
-                self.trace(depth, "current best: {}\n", .{value});
+                if (a >= b) break;
+                self.trace(depth, "current best: {}\n", .{best});
             }
-            return value;
+            return best;
         }
 
         fn trace(self: Self, depth: usize, comptime fmt: []const u8, args: anytype) void {

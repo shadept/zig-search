@@ -91,8 +91,8 @@ fn NegamaxInternal(
         }
 
         pub fn search(self: *Self, state: S) Allocator.Error!?M {
-            if (use_diagnostics) {
-                self.diagnostics.nodes = 1;
+            if (self.max_depth == 0) {
+                return null;
             }
 
             const moves = try Context.generateMoves(state, self.allocator);
@@ -102,12 +102,12 @@ fn NegamaxInternal(
                 return null;
             }
 
-            var best_move: ?M = null;
+            var best_move: M = moves[0];
             var best_score: Score = MinScore;
             for (moves) |move| {
                 self.trace(0, "\tconsidering move: {}", .{move});
                 const next_state = Context.applyMove(state, move);
-                const score = -try self.searchInternal(next_state, self.max_depth, -MaxScore, -MinScore);
+                const score = -(try self.searchInternal(next_state, self.max_depth, MinScore, -best_score));
                 self.trace(0, " | score: {}\n", .{score});
                 if (score > best_score) {
                     best_score = score;
@@ -144,21 +144,26 @@ fn NegamaxInternal(
                 }
             }
 
-            const moves = try Context.generateMoves(state, self.allocator);
-            defer self.allocator.free(moves);
+            if (Context.getWinner(state)) |_| {
+                return MaxScore;
+            }
 
-            if (depth == 0 or moves.len == 0) {
+            if (depth == 0) {
                 return Context.evaluate(state);
             }
+
+            const moves = try Context.generateMoves(state, self.allocator);
+            defer self.allocator.free(moves);
 
             const ctx = C.StateSortContext(S, M, Context).init(state, self.allocator);
             const next_states = try ctx.applyAndSort(moves);
             defer self.allocator.free(next_states);
 
-            var value: Score = MinScore;
+            var best: Score = MinScore;
             for (next_states) |next| {
                 self.trace(depth, "considering move: {}\n", .{next.move});
-                value = @max(value, -(try self.searchInternal(next.state, depth - 1, -beta, -alpha)));
+                const value = -(try self.searchInternal(next.state, depth - 1, -beta, -alpha));
+                best = @max(best, value);
                 alpha = @max(alpha, value);
                 if (alpha >= beta) {
                     break;
@@ -167,10 +172,10 @@ fn NegamaxInternal(
 
             if (comptime use_transposition) {
                 const entry = (try self.transposition_table.getOrPut(state)).value_ptr;
-                entry.score = value;
-                if (value <= alphaImut) {
+                entry.score = best;
+                if (best <= alphaImut) {
                     entry.flag = .UpperBound;
-                } else if (value >= beta) {
+                } else if (best >= beta) {
                     entry.flag = .LowerBound;
                 } else {
                     entry.flag = .Exact;
@@ -178,7 +183,7 @@ fn NegamaxInternal(
                 entry.depth = depth;
             }
 
-            return value;
+            return best;
         }
 
         fn trace(self: Self, depth: usize, comptime fmt: []const u8, args: anytype) void {

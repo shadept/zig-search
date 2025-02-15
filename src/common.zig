@@ -36,6 +36,19 @@ pub fn Strategy(comptime S: type, comptime M: type) type {
 
 pub const Score = i64;
 
+/// The result of playing a game to it's conclusion.
+pub const Winner = enum {
+    /// The last player to move.
+    ///
+    /// This is the most common since the player wins by performing the move and thus moving the player varible to the
+    /// next player. Only after that, the game state is evaluated.
+    PreviousPlayer,
+    /// No winner
+    Draw,
+    /// Uncommon case where you can lose by making a move. (e.i. busting on Blackjack)
+    CurrentPlayer, // Rare case
+};
+
 pub fn StateSortContext(comptime S: type, comptime M: type, comptime Context: type) type {
     return struct {
         pub const StateWithEval = struct { state: S, move: M, score: Score };

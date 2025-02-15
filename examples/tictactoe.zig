@@ -2,6 +2,10 @@ const std = @import("std");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 
+const Search = @import("search");
+const Score = Search.Score;
+const Winner = Search.Winner;
+
 const Self = @This();
 const Move = u8;
 
@@ -37,19 +41,17 @@ pub fn applyMove(state: Self, move: Move) Self {
     return next_state;
 }
 
-pub fn isGameOver(state: Self) bool {
-    if (evaluate(state) != 0) return true;
-    var r = true;
+pub fn getWinner(state: Self) ?Winner {
+    if (evaluate(state) != 0) return .PreviousPlayer;
     for (state.board) |c| {
         if (c == 0) {
-            r = false;
-            break;
+            return null;
         }
     }
-    return r;
+    return .Draw;
 }
 
-pub fn evaluate(state: Self) i64 {
+pub fn evaluate(state: Self) Score {
     const sign: i8 = if (state.player == 0) 1 else -1;
     for (0..3) |i| {
         // row

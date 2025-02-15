@@ -86,15 +86,18 @@ fn MinimaxInternal(
                 return sign * Context.evaluate(state);
             }
 
-            var value: Score = if (is_maximizing) MinScore else MaxScore;
-            for (moves) |move| {
-                self.trace(depth, "considering move: {}\n", .{move});
-                const next_state = Context.applyMove(state, move);
-                const branch_score = try self.searchInternal(next_state, depth - 1, !is_maximizing);
-                value = if (is_maximizing) @max(value, branch_score) else @min(value, branch_score);
-                self.trace(depth, "current best: {}\n", .{value});
+            const ctx = C.StateSortContext(S, M, Context).init(state, self.allocator);
+            const next_states = try ctx.applyAndSort(moves);
+            defer self.allocator.free(next_states);
+
+            var best: Score = if (is_maximizing) MinScore else MaxScore;
+            for (next_states) |next| {
+                self.trace(depth, "considering move: {}\n", .{next.move});
+                const branch_score = try self.searchInternal(next.state, depth - 1, !is_maximizing);
+                best = if (is_maximizing) @max(best, branch_score) else @min(best, branch_score);
+                self.trace(depth, "current best: {}\n", .{best});
             }
-            return value;
+            return best;
         }
 
         fn trace(self: Self, depth: usize, comptime fmt: []const u8, args: anytype) void {

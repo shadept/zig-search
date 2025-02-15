@@ -81,11 +81,14 @@ pub fn GameLoop(comptime Context: type, comptime title: []const u8, comptime max
                 try game.renderBoard(stdout);
                 game = try players[current_player].play(game);
                 current_player = if (current_player == 0) 1 else 0;
-                if (game.isGameOver()) {
-                    try game.renderBoard(stdout);
-                    _ = try stdout.writeAll("Game over\n");
-                    break;
+                const winner = game.getWinner() orelse continue;
+                try game.renderBoard(stdout);
+                switch (winner) {
+                    .PreviousPlayer => try stdout.writeAll("You win\n"),
+                    .Draw => try stdout.writeAll("Draw\n"),
+                    .CurrentPlayer => try stdout.writeAll("You lose\n"),
                 }
+                break;
             }
         }
 
@@ -120,15 +123,11 @@ pub fn GameLoop(comptime Context: type, comptime title: []const u8, comptime max
                 const result = try self.strategy.chooseMove(game);
                 const elapsed: f64 = @floatFromInt(timer.read());
                 std.debug.print("Time elapsed is: {d:.3}ms\n", .{elapsed / std.time.ns_per_ms});
-                if (result) |move| {
-                    // std.debug.assert(game.board[res.move] == 0);
-                    std.debug.print("Computer move: {}\n", .{move + 1});
-                    const next_state = game.applyMove(move);
-                    return next_state;
-                } else {
-                    std.debug.print("No moves??\n", .{});
-                    return game;
-                }
+                // std.debug.assert(game.board[res.move] == 0);
+                const move = result orelse @panic("no moves??!");
+                std.debug.print("Computer move: {}\n", .{move + 1});
+                const next_state = game.applyMove(move);
+                return next_state;
             }
         };
 
