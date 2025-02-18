@@ -3,6 +3,7 @@ const testing = std.testing;
 const Allocator = std.mem.Allocator;
 
 const Search = @import("search");
+const Game = Search.Game;
 const Score = Search.Score;
 const Winner = Search.Winner;
 
@@ -14,6 +15,40 @@ player: u8,
 
 pub fn init() Self {
     return .{ .board = [_]i8{0} ** 9, .player = 0 };
+}
+
+pub fn game(self: Self) Game(Self, Move) {
+    const impl = struct {
+        pub fn applyMove(s: Self, move: Move) Game(Self, Move) {
+            var next_state = s.applyMove(move);
+            return next_state.game();
+        }
+    };
+    return .{
+        .state = self,
+        .vtable = &.{
+            .getWinner = getWinner,
+            .getPlayer = getPlayer,
+            .generateMoves = generateMoves,
+            .applyMove = impl.applyMove,
+            .evaluate = evaluate,
+            .renderBoard = renderBoard,
+        },
+    };
+}
+
+pub fn getWinner(state: Self) ?Winner {
+    if (evaluate(state) != 0) return .PreviousPlayer;
+    for (state.board) |c| {
+        if (c == 0) {
+            return null;
+        }
+    }
+    return .Draw;
+}
+
+pub fn getPlayer(self: Self) ?u8 {
+    return self.player;
 }
 
 pub fn generateMoves(state: Self, allocator: Allocator) Allocator.Error![]Move {
@@ -39,16 +74,6 @@ pub fn applyMove(state: Self, move: Move) Self {
     next_state.board[move] = if (state.player == 0) 1 else -1;
     next_state.player = if (state.player == 0) 1 else 0;
     return next_state;
-}
-
-pub fn getWinner(state: Self) ?Winner {
-    if (evaluate(state) != 0) return .PreviousPlayer;
-    for (state.board) |c| {
-        if (c == 0) {
-            return null;
-        }
-    }
-    return .Draw;
 }
 
 pub fn evaluate(state: Self) Score {
@@ -86,6 +111,35 @@ pub fn evaluate(state: Self) Score {
     }
 
     return 0;
+}
+
+pub fn renderBoard(self: Self, stdout: std.fs.File) !void {
+    var bw = std.io.bufferedWriter(stdout.writer());
+    var writer = bw.writer();
+
+    inline for (0..3) |i| {
+        const r = i * 3;
+        const c1 = renderCell(self.board[r], r);
+        const c2 = renderCell(self.board[r + 1], r + 1);
+        const c3 = renderCell(self.board[r + 2], r + 2);
+        try writer.print("{c}|{c}|{c}\n", .{ c1, c2, c3 });
+    }
+    try bw.flush();
+}
+
+fn renderCell(player: i8, cell: u8) u8 {
+    if (player == 0) {
+        return '1' + cell;
+    } else {
+        return if (player == 1) 'X' else 'O';
+    }
+}
+
+pub fn main() !void {
+    const GameLoop = @import("common.zig").GameLoop;
+    const game_loop = GameLoop(Self, "Tic-Tac-Toe", 10);
+    var g = init();
+    try game_loop.mainLoop(g.game());
 }
 
 // test "initial position" {
@@ -162,31 +216,3 @@ pub fn evaluate(state: Self) Score {
 //         try testing.expectEqual(1, evaluate(ttt));
 //     }
 // }
-
-pub fn renderBoard(self: Self, stdout: std.fs.File) !void {
-    var bw = std.io.bufferedWriter(stdout.writer());
-    var writer = bw.writer();
-
-    inline for (0..3) |i| {
-        const r = i * 3;
-        const c1 = renderCell(self.board[r], r);
-        const c2 = renderCell(self.board[r + 1], r + 1);
-        const c3 = renderCell(self.board[r + 2], r + 2);
-        try writer.print("{c}|{c}|{c}\n", .{ c1, c2, c3 });
-    }
-    try bw.flush();
-}
-
-fn renderCell(player: i8, cell: u8) u8 {
-    if (player == 0) {
-        return '1' + cell;
-    } else {
-        return if (player == 1) 'X' else 'O';
-    }
-}
-
-pub fn main() !void {
-    const GameLoop = @import("common.zig").GameLoop;
-    const game_loop = GameLoop(Self, "Tic-Tac-Toe", 10);
-    try game_loop.mainLoop();
-}

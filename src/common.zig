@@ -1,6 +1,66 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+pub const Score = i64;
+
+/// The result of playing a game to it's conclusion.
+pub const Winner = enum {
+    /// The last player to move.
+    ///
+    /// This is the most common since the player wins by performing the move and thus moving the player varible to the
+    /// next player. Only after that, the game state is evaluated.
+    PreviousPlayer,
+    /// No winner
+    Draw,
+    /// Uncommon case where you can lose by making a move. (e.i. busting on Blackjack)
+    CurrentPlayer, // Rare case
+};
+
+pub fn Game(comptime S: type, comptime M: type) type {
+    return struct {
+        const Self = @This();
+
+        state: S,
+        vtable: *const VTable,
+
+        pub const VTable = struct {
+            getWinner: *const fn (ctx: S) ?Winner,
+            getPlayer: *const fn (ctx: S) ?u8,
+            generateMoves: *const fn (ctx: S, allocator: Allocator) Allocator.Error![]M,
+            applyMove: *const fn (ctx: S, move: M) Self,
+            evaluate: *const fn (ctx: S) Score,
+            renderBoard: *const fn (ctx: S, stdout: std.fs.File) anyerror!void,
+        };
+
+        /// If game is on terminal state, returns the Winner of the game, or if it was a draw. The winner (if any) is
+        /// usually the player that played before the current one.
+        pub fn getWinner(self: Self) ?Winner {
+            return self.vtable.getWinner(self.state);
+        }
+
+        /// Returns the current player. If null, means the game will take an automatic or probabilistic (like drawing a card) action.
+        pub fn getPlayer(self: Self) ?u8 {
+            return self.vtable.getPlayer(self.state);
+        }
+
+        pub fn generateMoves(self: Self, allocator: Allocator) Allocator.Error![]M {
+            return self.vtable.generateMoves(self.state, allocator);
+        }
+
+        pub fn applyMove(self: Self, move: M) Self {
+            return self.vtable.applyMove(self.state, move);
+        }
+
+        pub fn evaluate(self: Self) Score {
+            return self.vtable.evaluate(self.state);
+        }
+
+        pub fn renderBoard(self: Self, stdout: std.fs.File) anyerror!void {
+            return self.vtable.renderBoard(self.state, stdout);
+        }
+    };
+}
+
 pub fn Strategy(comptime S: type, comptime M: type) type {
     return struct {
         const Self = @This();
@@ -33,21 +93,6 @@ pub fn Strategy(comptime S: type, comptime M: type) type {
         pub fn noMaxDepth(_: *anyopaque, _: usize) void {}
     };
 }
-
-pub const Score = i64;
-
-/// The result of playing a game to it's conclusion.
-pub const Winner = enum {
-    /// The last player to move.
-    ///
-    /// This is the most common since the player wins by performing the move and thus moving the player varible to the
-    /// next player. Only after that, the game state is evaluated.
-    PreviousPlayer,
-    /// No winner
-    Draw,
-    /// Uncommon case where you can lose by making a move. (e.i. busting on Blackjack)
-    CurrentPlayer, // Rare case
-};
 
 pub fn StateSortContext(comptime S: type, comptime M: type, comptime Context: type) type {
     return struct {

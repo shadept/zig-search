@@ -2,12 +2,13 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Search = @import("search");
+const Game = Search.Game;
 const Strategy = Search.Strategy;
 
-pub fn GameLoop(comptime Context: type, comptime title: []const u8, comptime max_depth: u8) type {
+pub fn GameLoop(comptime S: type, comptime title: []const u8, comptime max_depth: u8) type {
     return struct {
         /// Main function
-        pub fn mainLoop() !void {
+        pub fn mainLoop(initial_state: Game(S, u8)) !void {
             var gpa = std.heap.GeneralPurposeAllocator(.{}){};
             const allocator = gpa.allocator();
 
@@ -39,18 +40,18 @@ pub fn GameLoop(comptime Context: type, comptime title: []const u8, comptime max
                     const response = try readLine(stdin, allocator);
                     defer allocator.free(response);
                     if (response.len == 1) {
-                        var strategy: Strategy(Context, u8) = undefined;
+                        var strategy: Strategy(S, u8) = undefined;
                         switch (response[0]) {
                             '1' => {
-                                var minimax = Search.Minimax(Context, u8).init(allocator, max_depth);
+                                var minimax = Search.Minimax(S, u8).init(allocator, max_depth);
                                 strategy = minimax.strategy();
                             },
                             '2' => {
-                                var alphabeta = Search.AlphaBeta(Context, u8).init(allocator, max_depth);
+                                var alphabeta = Search.AlphaBeta(S, u8).init(allocator, max_depth);
                                 strategy = alphabeta.strategy();
                             },
                             '3' => {
-                                var negamax = Search.Negamax(Context, u8).init(allocator, max_depth);
+                                var negamax = Search.Negamax(S, u8).init(allocator, max_depth);
                                 strategy = negamax.strategy();
                             },
                             else => continue,
@@ -75,7 +76,7 @@ pub fn GameLoop(comptime Context: type, comptime title: []const u8, comptime max
                 }
             }
 
-            var game = Context.init();
+            var game = initial_state;
 
             while (true) {
                 try game.renderBoard(stdout);
@@ -97,8 +98,8 @@ pub fn GameLoop(comptime Context: type, comptime title: []const u8, comptime max
             stdin: std.fs.File,
             allocator: Allocator,
 
-            pub fn play(self: *HumanPlayer, game: Context) !Context {
-                const valid_moves = try Context.generateMoves(game, self.allocator);
+            pub fn play(self: *HumanPlayer, game: Game(S, u8)) !Game(S, u8) {
+                const valid_moves = try game.generateMoves(self.allocator);
                 var move: u8 = 0;
                 while (true) {
                     _ = try self.stdout.writeAll("Next move: ");
@@ -116,11 +117,11 @@ pub fn GameLoop(comptime Context: type, comptime title: []const u8, comptime max
         };
 
         const CpuPlayer = struct {
-            strategy: Strategy(Context, u8),
+            strategy: Strategy(S, u8),
 
-            pub fn play(self: *CpuPlayer, game: Context) !Context {
+            pub fn play(self: *CpuPlayer, game: Game(S, u8)) !Game(S, u8) {
                 var timer = try std.time.Timer.start();
-                const result = try self.strategy.chooseMove(game);
+                const result = try self.strategy.chooseMove(game.state);
                 const elapsed: f64 = @floatFromInt(timer.read());
                 std.debug.print("Time elapsed is: {d:.3}ms\n", .{elapsed / std.time.ns_per_ms});
                 // std.debug.assert(game.board[res.move] == 0);
@@ -139,11 +140,11 @@ pub fn GameLoop(comptime Context: type, comptime title: []const u8, comptime max
                 return .{ .human = .{ .stdout = stdout, .stdin = stdin, .allocator = allocator } };
             }
 
-            pub fn initCpu(strategy: Strategy(Context, u8)) Player {
+            pub fn initCpu(strategy: Strategy(S, u8)) Player {
                 return .{ .cpu = .{ .strategy = strategy } };
             }
 
-            pub fn play(self: *Player, game: Context) !Context {
+            pub fn play(self: *Player, game: Game(S, u8)) !Game(S, u8) {
                 return switch (self.*) {
                     inline else => |*impl| impl.play(game),
                 };
